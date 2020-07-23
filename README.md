@@ -4,7 +4,7 @@ This library is a header-only lightweight wrapper for utilizing, declaring and i
 
 ## Getting Started
 
-This is the code required to implement `MyObject` class that implements two COM interfaces, `IFirstInterface` and `ISecondInterface`:
+This is the code required to define `MyObject` class that implements two COM interfaces, `IFirstInterface` and `ISecondInterface`:
 
 ```C++
 #include <moderncpp/interfaces.h>
@@ -38,16 +38,17 @@ Read further to find out the details!
 *   Supports definition of native C++ classes that implement any number of COM interfaces either directly or through "implementation proxies"
 *   Supports aggregation, objects on stack and singleton objects
 *   Provides interoperability with ATL and serves as a natural upgrade path when upgrading legacy projects that use ATL
-*   Allows classes that implement interfaces to have non-empty constructors
+*   Allows classes that implement interfaces to have non-default constructors
 *   Provides the COM "smart pointer" class, which can also be used independently from the rest of the library
+*   Provides compile-time conversion of string GUIDs to `GUID`, which can be used independently from the rest of the library
 *   Provides various customization points to simplify debugging or extend functionality of the library
 *   Has built-in leak detection mechanism (that can be opted-in per class) to automatically search for leaked COM object references
 
 ## Requirements
 
-The library requires C++20 and has been tested Microsoft Visual C++ compiler 19.26.28806.
+The library requires C++20 and has been tested on Microsoft Visual C++ compiler 19.26.28806 (Visual Studio 2019 16.6.5).
 
-The library is currently Windows and MSVC only. Actually, the actual Windows dependency is small and may be removed and ideas behind stable COM ABI may also be used on non-Windows platforms. This has not been done (yet?), however.
+See also [FAQ](#faq) section below for more information.
 
 ## Installation
 
@@ -66,6 +67,7 @@ Use the links for fast navigation:
 *   [Constructing Objects](#constructing-objects)
 *   [Implementing COM DLL Server](#implementing-com-dll-server)
 *   [Automatic Leak Detection](#automatic-leak-detection)
+*   [FAQ](#faq)
 
 ### GUID Helpers
 
@@ -124,7 +126,7 @@ constexpr GUID get_interface_guid() noexcept;
 #include <moderncpp/com_ptr.h>
 ```
 
-This header file provides the following template classes: `belt::com::com_ptr` and `belt::com::ref`, For convenience, they are also available in `bcom` namespace as `bcom::ptr` and `bcom::ref` correspondingly.
+This header file provides the following template classes: `belt::com::com_ptr` and `belt::com::ref`. For convenience, they are also available in `bcom` namespace as `bcom::ptr` and `bcom::ref` correspondingly.
 
 #### `bcom::ptr`
 
@@ -136,7 +138,7 @@ class com_ptr<Interface>
 };
 ```
 
-`bcom::ptr` takes a single template argument, the interface class itself. The library must be able to fetch an interface ID (IID) from this type.
+`com_ptr` takes a single template argument, the interface class itself. The library must be able to fetch an interface ID (IID) from this type.
 
 The following constructors are provided:
 
@@ -147,7 +149,7 @@ The following constructors are provided:
     com_ptr(std::nullptr_t) noexcept;
     ```
 
-    Default-construct or null-construct the smart pointer object.
+    Default-construct or null-construct the smart pointer object. The object becomes empty.
 
 1.  Raw interface pointer constructor
 
@@ -234,7 +236,7 @@ Method | Description
 `bool operator ==(const com_ptr &o) const noexcept` | Checks whether two smart pointer objects are equal
 `bool operator !=(const com_ptr &o) const noexcept` | Checks whether two smart pointer objects are not equal
 `bool operator <(const com_ptr &o) const noexcept` | Introduces ordering
-`void attach(Interface *p_) noexcept` | Attaches a raw interface pointer. Asserts if smart pointer object is not empty
+`void attach(Interface *p) noexcept` | Attaches a raw interface pointer. Asserts if smart pointer object is not empty
 `[[nodiscard]] Interface *detach() noexcept` | Detaches the currently stored raw interface pointer
 `Interface *get() const noexcept` | Retrieves the currently stored raw interface pointer
 `Interface **put() noexcept` | Provides a write access to the stored raw interface pointer. Asserts if the object is not empty
@@ -248,7 +250,7 @@ Operators `==` and `!=` are also provided to any combination of `Interface *` an
 
 #### `bcom::ref`
 
-This class is supposed to be used as a replacement for raw interface pointer in cases when interface pointer is explicitly stored without adding a reference. Consider the following example:
+This class is supposed to be used as a replacement for raw interface pointer in cases when interface pointer is used without adding a reference. Consider the following example:
 
 ```C++
 void serialize(IStream *pStream)
@@ -362,16 +364,17 @@ Method | Description
 
 ### COM Interface Support
 
-A `moderncom/interfaces.h` header provides infrastructure for working COM interfaces in native C++ code.
+A `moderncom/interfaces.h` header provides infrastructure for working with COM interfaces in native C++ code.
 
 #### Declaring Interfaces
 
-The following macros may be used to declare interfaces:
+The following macros may be used to declare interfaces: {#BELT_DEFINE_INTERFACE}
 
 ```C++
 BELT_DEFINE_INTERFACE(name, guid)
 {
-  // declare interface members here as normal C++ abstract methods
+  // declare interface members here as normal C++ abstract methods, for example
+  virtual int sum(int a, int b) = 0;
 };
 ```
 
@@ -380,7 +383,8 @@ or
 ```C++
 BELT_DEFINE_INTERFACE_BASE(name, baseInterfaceName, guid)
 {
-  // declare interface members here as normal C++ abstract methods
+  // declare interface members here as normal C++ abstract methods, for example
+  virtual int sum(int a, int b) = 0;
 };
 ```
 
@@ -477,7 +481,7 @@ class object;
     static com_ptr<IUnknown> create_aggregate(IUnknown *pOuterUnknown, Args &&...args);
     ```
 
-    Create new instance of `Derived` aggregating `pOuterUnknown`. `Derived` must has `supports_aggregation` trait (see below).
+    Create new instance of `Derived` aggregating `pOuterUnknown`. `Derived` must has [`supports_aggregation`](#supports_agregation) trait (see below).
 
     Arguments, if passed are perfect-forwarded to `Derived`'s constructor.
     
@@ -614,7 +618,7 @@ class MyClass :
 
 It is often convenient to create classes or template classes that provide (partial) implementation of a given interface or interfaces and then use them when implementing final classes.
 
-The library provides a machinery for such "implementation proxy" classes with a help of `intermediate` template:
+The library provides a machinery for such "implementation proxy" classes with a help of `intermediate` class template:
 
 ```C++
 template<class ProxyClass, class...Interfaces>
@@ -653,7 +657,7 @@ class MyClass :
 
 #### `object_holder`
 
-`object_holder` is a temporary object holder class that is returned by `object<Derived, ...>::create_instance` method:
+`object_holder` is a temporary object holder class template that is returned by `object<Derived, ...>::create_instance` method:
 
 ```C++
 template<class T>
@@ -665,7 +669,7 @@ Where `T` is an unspecified class derived from `Derived`.
 The class has the following members:
 
 *   ```C++
-    auto to_ptr() && noexcept;
+    com_ptr<Derived::DefaultInterface> to_ptr() && noexcept;
     ```
 
     May only be invoked on temporary `object_holder` object and "converts" it to `com_ptr<Derived::DefaultInterface>`. 
@@ -686,7 +690,7 @@ The class has the following members:
     Derived *obj() const noexcept;
     ```
 
-    Special purpose method to be used when additional initialization is required on constructed object:
+    This special-purpose method is supposed to be used when additional initialization is required on constructed object:
 
     ```C++
     class __declspec(novtable) MyObject :
@@ -714,7 +718,7 @@ A trait class is a special class that `Derived` must directly derive from to cha
 *   [`increments_module_count`](#increments_module_count)
 *   [`enable_leak_detection`](#enable_leak_detection)
 
-Some of these trait classes automatically "propagate" down to inheritance chain. That is, if an implementation proxy specifies a trait, it will also be present in any derived final class.
+Some of these trait classes automatically "propagate" down on inheritance chain. That is, if an implementation proxy class or even an interface class specifies a trait, it will also be present in any derived final class.
 
 #### `singleton_factory`
 
@@ -722,9 +726,13 @@ When object is constructed using library's [default construction mechanism](#def
 
 Singleton object is created at the time it is first requested and lives until the program is finished. There is no way to destroy the object before the program ends.
 
+Access to object creation is thread-safe.
+
 #### `single_cached_instance`
 
 A special case of a singleton. An object is created at the time it is first requested and cached for all subsequent create requests. If the created object's reference count reaches zero, it is destroyed.
+
+Access to object creation and destruction is thread-safe.
 
 #### `supports_aggregation`
 
@@ -755,19 +763,19 @@ A customization point is a public method declared in the `Derived` class. The fo
 
 #### `final_construct`
 
-When constructor of the `Derived` class executes, reference-counting machinery is not yet initialized. Therefore, constructor code cannot make any external calls that expect the current object to be a valid COM object.
+When constructor of the `Derived` class executes, reference-counting machinery is not yet initialized. Therefore, constructor cannot make any external calls that expect the current object to be a valid COM object.
 
 For such cases, a class may provide the following public method:
 
 ```C++
 template<class ...Args>
-HRESULT final_construct(Args &&...args) noexcept
+HRESULT final_construct(Args &&...args)
 {
   ...
 }
 ```
 
-The `final_construct` method is invoked when reference-counting machinery is fully initialized. If arguments are present, the user is supposed to pass `belt::com::delayed` object as a first argument to `create_instance` or `create_aggregate` methods and `Derived` constructor must take no params.
+The `final_construct` method is invoked when reference-counting machinery is fully initialized. If arguments are present, the user is supposed to pass `belt::com::delayed` object as a first argument to `create_instance` or `create_aggregate` methods and `Derived` constructor must take no parameters.
 
 `final_construct` is allowed to throw exceptions or return non-zero error codes. If `final_construct` returns an error code, an instance of `corsl::hresult_error` holding this error code is thrown.
 
@@ -846,6 +854,8 @@ HRESULT pre_query_interface(REFIID iid, void **ppresult) noexcept;
 
 If method is capable of producing result, it must store it at `*ppresult` and return `S_OK`. Otherwise, it must return `E_NOINTERFACE`. If this method returns any other value, `QueryInterface` processing immediately stops and the given error code is returned to the caller. In this case, the method **must store nullptr** at `*ppresult`.
 
+If successful result is produced, implementation must call `AddRef` on obtained interface.
+
 #### `post_query_interface`
 
 This customization point is invoked after standard `QueryInterface` machinery was unable to find a requested interface:
@@ -855,6 +865,8 @@ HRESULT post_query_interface(REFIID iid, void **ppresult) noexcept;
 ```
 
 If method is capable of producing result, it must store it at `*ppresult` and return `S_OK`. Otherwise, it **must store nullptr** at `*ppresult` and return `E_NOINTERFACE`.
+
+If successful result is produced, implementation must call `AddRef` on obtained interface.
 
 ### Constructing Objects
 
@@ -872,7 +884,7 @@ If the first argument is `belt::com::delayed`, then the default constructor is u
 
 If object construction succeeds, the method returns a proxy object. This proxy object is usually kept temporary and you will immediately invoke its `to_ptr()` method, optionally passing an interface you want to query from the created object.
 
-Advanced usages of a proxy object is described above in [`object_holder`](#object_holder) section.
+Advanced usages of a proxy object are described above in [`object_holder`](#object_holder) section.
 
 Note that the class's constructor or `final_construct` customization point are allowed to throw exceptions.
 
@@ -890,7 +902,7 @@ void bar(bcom::ref<IMyInterface> p)
 
 void foo()
 {
-  belt::com::value_on_stack<MyClass> obj;
+  belt::com::value_on_stack<MyClass> obj{/* arguments to constructor or final_construct */};
   bar(&obj);
 }
 ```
@@ -910,11 +922,15 @@ BELT_OBJ_ENTRY_AUTO2(classguid, classname)
 
 The `BELT_OBJ_ENTRY_AUTO` macro registers `classname` class for which library can automatically fetch class ID. 
 
-The `BELT_OBJ_ENTRY_AUTO2` macro registers `classname` with a given CLSID.
+The `BELT_OBJ_ENTRY_AUTO2` macro registers `classname` with a given CLSID:
 
-As described above, an ability to automatically fetch the class ID means that either `get_guid` was specialized for the class, or `__declspec(uuid("..."))` was added to class's declaration. 
+```C++
+BELT_OBJ_ENTRY_AUTO2("{FFDBB4B7-8ECB-42FE-BF68-163B1E0829A2}"_guid, MyClass);
+```
 
-The library also provides a macro to attach an ID to a class:
+As described above, an ability to automatically fetch the class ID means that either `get_guid` was specialized for the class, or `__declspec(uuid("..."))` was added to class's declaration.
+
+The library also provides a macro to attach an ID to a class: {#BELT_DEFINE_CLASS}
 
 ```C++
 BELT_DEFINE_CLASS(classGuidName, guid)
@@ -929,7 +945,7 @@ public:
 };
 ```
 
-Once the class is registered, instances of this class may be created using one of the following functions:
+After the class is registered, instances of this class may be created using one of the following functions:
 
 *   ```C++
     template<class Interface>
@@ -1007,5 +1023,27 @@ Once leaked objects are found, add them to the Watch window in Visual Studio and
 #### Limitations
 
 1. Leak detection is built into `com_ptr` and `object` classes and therefore is unable to track calls to `AddRef` and `Release` made by other components. In other words, it always assumes that only `com_ptr` class makes calls to `AddRef` and `Release`.
+
 1. Leak detection does not currently find leaked objects. Once a leaked object is found by other means, it can be viewed in the debugger to see a list of stack traces.
 
+## FAQ
+
+1.  How robust is the library?
+
+    This library was extracted from mature production code that had been in use for several years. `moderncom` should be in a good quality to be used in a project of any size.
+
+1.  Why C++20?
+
+    The production code this library was extracted from is constantly updated to use latest language features. Initially `moderncom` required C++17 and some C++20 requirements were added at a later time.
+
+1.  Why Windows and MSVC only?
+
+    COM is a Windows technology that is continued to be used even in modern OS components. In fact, the newest WinRT is also based on COM. However, COM can be considered a technology to provide binary inter-connectivity between native components with a stable C++ ABI and therefore, may theoretically be used on other platforms. It can also be used as a way to establish Inversion of Control principles in code.
+
+    There are a few Windows bindings in the code that may be relatively easy decoupled from the rest of the code. After that, the library may be used on other platforms to establish a solid connectivity between application components.
+
+    This has not been done, however.
+
+1.  What served as inspiration for this library?
+
+    The library was initially created as a way to "renovate" old code base that used ATL for COM support. It was inspired by early works by Kenny Kerr on his `moderncpp` project (which later became C++/WinRT library). The library may share some ideas (but not implementation) with C++/WinRT. It also does not have dependency on WinRT and does not require Windows 10.
